@@ -1,4 +1,23 @@
+# Virtual environment
 venv/
+
+# Python cache
 __pycache__/
 *.pyc
-.emotions_log.txt
+*.pyo
+*.pyd
+
+# Logs and temporary files
+*.log
+emotions_log.txt
+logs/
+
+# VS Code settings
+.vscode/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Jupyter checkpoints (if any)
+.ipynb_checkpoints/
