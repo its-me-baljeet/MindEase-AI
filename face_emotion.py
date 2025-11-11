@@ -1,84 +1,87 @@
+# emotion_client.py
 import cv2
 from deepface import DeepFace
 import time
-import matplotlib.pyplot as plt
-import datetime
-from collections import Counter
+import requests
+import json
 
-# -----------------------------
-# Initialize list to store emotions
-# Each entry: (timestamp, emotion, confidence)
-emotions_log = []
+# ====== CONFIG ======
+API_URL = "http://localhost:3000/api/emotion/ingest"   # or your deployed URL
+EMOTION_API_KEY = "7wM2UJYkKjrRa_JXtHKtEG5jbFzim7I45pvXH1xoVTo"  # <-- paste the key here
+SEND_EVERY_SECONDS = 2.0
+# ====================
 
-# Start webcam
-cap = cv2.VideoCapture(0)
+# Map DeepFace emotions -> schema Emotion enum
+EMOTION_MAP = {
+    "happy": "HAPPY",
+    "neutral": "NEUTRAL",
+    "sad": "SAD",
+    "angry": "ANGRY",
+    # Collapse others to STRESSED
+    "fear": "STRESSED",
+    "disgust": "STRESSED",
+    "surprise": "STRESSED",
+    "stress": "STRESSED",
+    "stressed": "STRESSED",
+}
 
-print("Press 'q' to quit the webcam and see results.")
-
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        print("Failed to grab frame.")
-        break
-
+def send_emotion(emotion: str, confidence: float, ts_sec: float):
+    payload = {
+        "emotion": emotion,          # raw string; server will map/normalize
+        "confidence": float(confidence),
+        "timestamp": ts_sec,         # seconds epoch; server handles both str/num
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "X-Emotion-Key": EMOTION_API_KEY,
+    }
     try:
-        # Resize frame for faster processing
-        small_frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
-
-        # Analyze emotions
-        result = DeepFace.analyze(small_frame, actions=['emotion'], enforce_detection=False)
-        emotion = result[0]['dominant_emotion']
-        confidence = result[0]['emotion'][emotion]
-
-        # Log timestamp, emotion, confidence
-        ts = round(time.time(), 2)
-        emotions_log.append((ts, emotion, confidence))
-
-        # Show emotion on the webcam feed
-        cv2.putText(frame, f"{emotion} ({confidence:.1f}%)", (50, 50),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        r = requests.post(API_URL, data=json.dumps(payload), headers=headers, timeout=5)
+        print("[POST]", r.status_code, r.text)
     except Exception as e:
-        print("Error analyzing frame:", e)
+        print("[POST] error:", e)
 
-    # Display webcam feed
-    cv2.imshow("Facial Emotion Recognition", frame)
+def main():
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("Cannot open webcam")
+        return
 
-    # Quit on 'q' key
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+    print("Press 'q' to quit.")
+    last_sent = 0.0
 
-cap.release()
-cv2.destroyAllWindows()
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            print("Failed to grab frame")
+            break
 
-# -----------------------------
-# Save emotions to file
-with open("emotions_log.txt", "w") as f:
-    for ts, emo, conf in emotions_log:
-        f.write(f"{ts},{emo},{conf}\n")
+        try:
+            small = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
+            result = DeepFace.analyze(small, actions=['emotion'], enforce_detection=False)
+            dom = result[0]['dominant_emotion']
+            conf = result[0]['emotion'][dom]
 
-print("Session log saved as emotions_log.txt")
+            # Overlay
+            cv2.putText(frame, f"{dom} ({conf:.1f}%)", (20, 40),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
 
-# -----------------------------
-# Print real-time stats
-if emotions_log:
-    counts = Counter([e[1] for e in emotions_log])
-    print("Emotion counts this session:", counts)
+            # Throttle outbound posts
+            now = time.time()
+            if now - last_sent >= SEND_EVERY_SECONDS:
+                last_sent = now
+                send_emotion(dom, conf, now)
 
-# -----------------------------
-# Visualize emotion trends
-if emotions_log:
-    timestamps, emotions, _ = zip(*emotions_log)
-    times = [datetime.datetime.fromtimestamp(ts) for ts in timestamps]
+        except Exception as e:
+            # If a frame fails, keep going
+            print("Analyze error:", e)
 
-    # Map emotions to numbers for plotting
-    emotion_map = {'angry': 1, 'disgust': 2, 'fear': 3, 'happy': 4, 'sad': 5, 'surprise': 6, 'neutral': 7}
-    emotion_nums = [emotion_map.get(e, 0) for e in emotions]
+        cv2.imshow("Facial Emotion Recognition", frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
-    plt.figure(figsize=(10,5))
-    plt.plot(times, emotion_nums, marker='o', linestyle='-')
-    plt.yticks(list(emotion_map.values()), list(emotion_map.keys()))
-    plt.xlabel("Time")
-    plt.ylabel("Emotion")
-    plt.title("Emotion Trend Over Time")
-    plt.grid(True)
-    plt.show()
+    cap.release()
+    cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    main()
